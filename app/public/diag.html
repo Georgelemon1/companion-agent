@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>布局诊断</title>
+<style>
+  body { font: 15px/1.7 system-ui, "Microsoft YaHei", sans-serif; background:#111; color:#eee;
+         margin:0; padding:22px; }
+  h1 { font-size:17px; margin:0 0 4px; }
+  .sub { color:#9aa; font-size:13px; margin-bottom:16px; }
+  table { border-collapse:collapse; width:100%; margin-bottom:14px; }
+  td { padding:5px 8px; border-bottom:1px solid #2a2f3a; vertical-align:top; }
+  td:first-child { color:#9aa; white-space:nowrap; width:38%; }
+  .ok { color:#9ece6a; } .bad { color:#f7768e; } .warn { color:#e0af68; }
+  code { background:#1d222b; padding:1px 5px; border-radius:3px; font-size:13px; }
+  #status { margin-top:16px; padding:12px; border-radius:8px; background:#1d222b; }
+</style>
+</head>
+<body>
+<h1>布局诊断</h1>
+<div class="sub">这页会测出你浏览器的真实数据并发回服务端，用来定位「手机框没生效」的原因。</div>
+<table id="t"></table>
+<div id="status">测量中…</div>
+
+<script>
+(async () => {
+  const rows = []
+  const add = (k, v, cls = '') => rows.push([k, `<span class="${cls}">${v}</span>`])
+
+  // ── 视口与设备 ─────────────────────────────────────────────
+  add('窗口内宽 (innerWidth)', window.innerWidth)
+  add('窗口内高 (innerHeight)', window.innerHeight)
+  add('documentElement 客户区', document.documentElement.clientWidth + ' × ' + document.documentElement.clientHeight)
+  add('devicePixelRatio', window.devicePixelRatio)
+  add('屏幕尺寸', screen.width + ' × ' + screen.height)
+  add('colorDepth / pixelDepth', screen.colorDepth + ' / ' + screen.pixelDepth)
+
+  // ── 媒体查询逐条判定（核心）────────────────────────────────
+  const QUERIES = {
+    'min-width:700px': '(min-width: 700px)',
+    'min-height:620px': '(min-height: 620px)',
+    '组合(应该命中)': '(min-width: 700px) and (min-height: 620px)',
+    '旧的 min-aspect-ratio:1/1': '(min-aspect-ratio: 1/1)',
+    'orientation:landscape': '(orientation: landscape)',
+  }
+  const mq = {}
+  for (const [label, q] of Object.entries(QUERIES)) {
+    const hit = window.matchMedia(q).matches
+    mq[label] = hit
+    add('媒体查询 ' + label, hit ? '命中 ✅' : '不命中 ❌', hit ? 'ok' : 'bad')
+  }
+
+  // ── style.css 是否真的加载、是否含关键规则 ─────────────────
+  let cssText = ''
+  let cssUrl = ''
+  try {
+    const link = document.querySelector('link[rel=stylesheet]')
+    cssUrl = link ? link.href : '(无 link)'
+    const res = await fetch(cssUrl, { cache: 'no-store' })
+    cssText = await res.text()
+    add('style.css URL', cssUrl)
+    add('style.css 拉取', `HTTP ${res.status}，${cssText.length} 字符`,
+        res.ok ? 'ok' : 'bad')
+    add('响应 cache-control', res.headers.get('cache-control') ?? '(none)',
+        res.headers.get('cache-control') ? 'ok' : 'warn')
+    for (const key of ['min-width: 700px', 'min-aspect-ratio', '100dvh', 'border-radius: 28px']) {
+      const has = cssText.includes(key)
+      add(`CSS 含 <code>${key}</code>`, has ? '是 ✅' : '否 ❌', has ? 'ok' : 'bad')
+    }
+    add('CSS 末尾 60 字符', '<code>' + cssText.slice(-60).replace(/</g, '&lt;') + '</code>')
+  } catch (e) {
+    add('style.css 拉取', '失败: ' + e.message, 'bad')
+  }
+
+  // ── 实际生效的计算样式（决定性证据）──────────────────────
+  const app = document.getElementById('app')
+  if (app) {
+    const cs = getComputedStyle(app)
+    const rect = app.getBoundingClientRect()
+    add('#app 宽度（计算值）', cs.width, cs.width === '390px' ? 'ok' : 'bad')
+    add('#app 高度（计算值）', cs.height)
+    add('#app 实际渲染矩形', `${rect.width.toFixed(1)} × ${rect.height.toFixed(1)}`,
+        Math.abs(rect.width - 390) < 2 ? 'ok' : 'bad')
+    add('#app border-radius', cs.borderRadius, cs.borderRadius === '28px' ? 'ok' : 'bad')
+    const bodyCs = getComputedStyle(document.body)
+    add('body display', bodyCs.display, bodyCs.display === 'grid' ? 'ok' : 'bad')
+    add('body background', bodyCs.backgroundColor)
+  } else {
+    add('#app', '找不到元素 ❌', 'bad')
+  }
+
+  // ── 匹配到的样式表规则（看媒体查询块到底有没有生效）────────
+  try {
+    let hitBlock = false
+    for (const sheet of document.styleSheets) {
+      let rules
+      try { rules = sheet.cssRules } catch { continue }
+      for (const r of rules) {
+        if (r.type === CSSRule.MEDIA_RULE && r.conditionText && r.conditionText.includes('700px')) {
+          hitBlock = true
+          add('找到媒体块', '<code>@media ' + r.conditionText + '</code> → ' +
+              (r.matches ? '当前生效 ✅' : '当前不生效 ❌'), r.matches ? 'ok' : 'bad')
+        }
+      }
+    }
+    if (!hitBlock) add('找到媒体块', '遍历样式表未找到（可能被 CSP 挡住读取）', 'warn')
+  } catch (e) {
+    add('遍历样式表', '失败: ' + e.message, 'warn')
+  }
+
+  // ── 渲染表格 ───────────────────────────────────────────────
+  document.getElementById('t').innerHTML =
+    rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')
+
+  // ── 回传 ───────────────────────────────────────────────────
+  const status = document.getElementById('status')
+  const payload = {
+    at: new Date().toISOString(),
+    ua: navigator.userAgent,
+    viewport: { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio,
+                screen: screen.width + 'x' + screen.height },
+    mediaQueries: mq,
+    css: { url: cssUrl, length: cssText.length, tail: cssText.slice(-80) },
+    appComputed: app ? {
+      width: getComputedStyle(app).width,
+      height: getComputedStyle(app).height,
+      radius: getComputedStyle(app).borderRadius,
+      rect: app.getBoundingClientRect().toJSON(),
+      bodyDisplay: getComputedStyle(document.body).display,
+    } : null,
+  }
+  try {
+    const r = await fetch('/companion/diag-report', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    status.innerHTML = r.ok
+      ? '✅ 已回传，去会话里看结果即可。'
+      : '❌ 回传失败：HTTP ' + r.status
+  } catch (e) {
+    status.textContent = '❌ 回传失败：' + e.message
+  }
+})()
+</script>
+</body>
+</html>

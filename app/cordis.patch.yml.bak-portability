@@ -1,0 +1,87 @@
+# companion-agent 应用层 patch —— 覆盖在 @deepseek-ai/dsh-base 之上。
+#
+# 应用自有 profile：不读 $DSH_HOME/profiles/<name>/cordis.patch.yml，
+# 因此这里的配置就是本应用的权威组合。凭据与 settings 仍从 ~/.dsh 读取
+# （DSH_HOME 不变），只有会话数据落在项目目录内。
+#
+# 路径用 !!js 从 baseUrl（本文件所在目录）派生，不写死绝对路径。
+
+# ── 会话落盘：改到项目目录，让应用状态自包含 ──────────────────────────────
+# SessionPersistenceJsonlConfig.root 必填且无默认值；默认由 starter profile 指定。
+# 覆盖成应用目录同级的 state/sessions，使"重启后会话不丢"可被直接检视。
+- id: session-persistence-jsonl
+  config:
+    root: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../state/sessions/', baseUrl))"
+
+# ── 遥测：本地测试应用，硬关 ─────────────────────────────────────────────
+- id: session-telemetry-otel
+  disabled: true
+
+# ── 模块热重载：应用不用 loader 级 HMR ──────────────────────────────────
+- id: hmr
+  disabled: true
+
+# ── 本应用自己的行 ──────────────────────────────────────────────────────
+- insert:
+    # ① 情感骨骼：情绪 + 关系状态机，SQLite 持久化，挂在 agent 事件上做评价
+    - id: companion-affect
+      name: ./companion/affect.js
+      config:
+        dbPath: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../state/companion.db', baseUrl))"
+        stateDir: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../state/', baseUrl))"
+        # 先用本地词表（零延迟零成本）；想让她读懂反讽与间接表达时改 true。
+        appraiseWithLlm: false
+        appraiseTimeoutMs: 20000
+        # WAL 维护周期。必须显式 checkpoint：自动阈值 1000 页(4MB) 对这个库来说
+        # 永远够不到（全库才约 11 页），不显式做 WAL 就只增不清。
+        checkpointIntervalMs: 300000
+
+    # ② 人设层：把"她是谁"与"她现在什么状态"接进系统提示词
+    #    （必须在 agent 作用域注册段，所以由它监听 agent/created）
+    - id: companion-persona
+      name: ./companion/persona-plugin.js
+      config:
+        injectState: true
+        stateDir: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../state/', baseUrl))"
+
+    # ③ 安全护栏：入站扫危机信号（直接 + 间接双通道）并注入应对指令；
+    #    出境体检由 web 层在广播前调用。定位是**角色质量保障**，不是法律义务（方案 §8.2）。
+    - id: companion-guard
+      name: ./companion/guard-plugin.js
+      config:
+        stateDir: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../state/', baseUrl))"
+        inbound: true
+        outbound: true
+        # rewrite = 命中即整段替换成安全句；notice = 只记录不改写（调试用）
+        outboundMode: rewrite
+        # 同一会话最多推荐几次求助资源，避免变成复读机
+        maxResourceMentions: 1
+
+    # ④ 时钟 + 主动性：全应用唯一的定时器。组候选 → 动机评分 → 过预算门 → agent.followup()
+    #    同时负责把用户说的话抽成事实卡片写进记忆。
+    - id: companion-clock
+      name: ./companion/clock.js
+      config:
+        stateDir: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../state/', baseUrl))"
+        tickMs: 30000
+        motivationThreshold: 7
+        dailyCap: 3
+        minCooldownMinutes: 90
+        missBackoffFactor: 3
+        idleThresholdHours: 8
+        missAfterMinutes: 30
+        respectQuietHours: true
+        quietHours: ['23:00', '08:00']
+        # 事实抽取先用本地规则（零延迟零成本）；想要更懂"随口一提"时改 true。
+        extractWithLlm: false
+        extractTimeoutMs: 20000
+
+    # ⑤ 自建轻前端 + WebSocket 通道（P0 核心），并订阅情感状态与主动性推给前端
+    - id: companion-web
+      name: ./companion/index.js
+      config:
+        port: 4180
+        host: 127.0.0.1
+        stateDir: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../state/', baseUrl))"
+        publicDir: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('./public/', baseUrl))"
+        speakerLabel: 用户

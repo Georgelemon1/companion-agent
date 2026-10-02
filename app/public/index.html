@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content">
+<title>Companion Agent</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<div id="app">
+  <!--
+    立绘舞台：**全屏背景**，以手机端为准。
+
+    为什么不做左右分栏（实测结论）：
+      立绘素材是 9:16 竖屏，桌面 16:9 显示器上无论怎么放都错——
+      按高缩放只覆盖 32% 宽度（两侧各空三分之一），按宽缩放则高度溢出 216%（人裁掉大半）。
+      而手机 9:19.5 与素材比例接近，铺满几乎无冲突。所以**以手机端为准**。
+
+    状态面板已全部移除（用户判定"完全没必要"）：
+      情绪数值 / 情绪条 / 关系阶段 / 认识天数 都是调试信息，
+      调研也证实：7 个海外主流产品里 0 个把情绪条做成被好评的功能。
+      她的情绪应该**从表情和语气里读出来**，不由 UI 汇报。
+  -->
+  <section id="stage" aria-label="立绘舞台"></section>
+
+  <section id="chat" aria-label="对话">
+    <header id="chat-header">
+      <span id="conn-dot" class="dot"></span>
+      <span id="conn-text">连接中…</span>
+      <span class="spacer"></span>
+    </header>
+    <div id="messages" role="log" aria-live="polite"></div>
+    <form id="composer" autocomplete="off">
+      <button id="mic" type="button" class="mic-btn" title="按住说话（需要 Chrome 或 Edge）" aria-label="按住说话">
+        <span class="mic-icon">🎤</span>
+      </button>
+      <textarea id="input" rows="1" placeholder="说点什么…"></textarea>
+      <button id="send" type="submit">发送</button>
+    </form>
+    <div id="mic-hint" class="mic-hint" hidden></div>
+  </section>
+</div>
+
+<!-- 人设定制表单（#persona-modal / 9 个维度 / 「定制她」按钮）已整体删除（2026-10-01，用户决定）：
+     不做手动定制 —— 她的一切设定应当**从真实交流里判断出的喜好**自动、实时地长出来。
+     后端相应地由"问卷写人设卡"改为"对话推断 + 实时更新"，见 app/companion/ 下的人设推断实现。
+     删除前端表单后，后端遗留的 questionnaire 路由即使还在也不会被调用（另一路在收尾）。 -->
+
+<!-- 剪纸立绘舞台。放在 app.js **之前**：模块脚本按文档顺序执行，
+     所以 app.js 运行时 window.CompanionStage 已就绪（舞台自己挂载 #stage）。 -->
+<script type="module" src="./papercut.js"></script>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
+

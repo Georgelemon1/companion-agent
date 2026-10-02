@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Companion Agent</string>
+    <string name="channel_name">Companion Agent</string>
+    <string name="channel_desc">保持本机运行时（PRoot + Node）常驻</string>
+    <string name="splash_title">正在准备运行时</string>
+    <string name="splash_hint">首次启动需要解包 Ubuntu + Node（约 1–3 分钟，视机型而定）。之后每次启动只需几秒。</string>
+    <string name="key_title">还差一步：填 API Key</string>
+    <string name="key_hint">sk-…（DeepSeek API Key）</string>
+    <string name="key_save">保存并启动</string>
+    <string name="key_note">只写在本机应用私有目录里，不会上传。也可以稍后构建时内嵌。</string>
+    <string name="retry">重试</string>
+</resources>
+

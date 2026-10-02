@@ -1,0 +1,7 @@
+# companion-agent —— 应用自有 profile 的空入口表。
+#
+# 整棵树由 patch 层组合而成：package.json 的 dsh.profile.bundles（这里只有
+# @deepseek-ai/dsh-base）→ cordis.patch.yml（本应用自己的层）。
+# 不要往这个文件里写条目：Loader 需要一个真实存在的 include 根来锚定 baseUrl，
+# 而条目全部来自 patch 层。
+[]

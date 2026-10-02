@@ -1,0 +1,325 @@
+:root {
+  --bg: #0f1115;
+  --panel: #161a21;
+  --panel-2: #1d222b;
+  --line: #262c37;
+  --text: #e6e9ef;
+  --muted: #8b93a3;
+  --accent: #7aa2f7;
+  --user: #2a3242;
+  --companion: #1b2130;
+  --danger: #f7768e;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --panel-2: #f0f2f5;
+    --line: #e2e5ea;
+    --text: #1b1f27;
+    --muted: #6b7280;
+    --user: #e8eefc;
+    --companion: #f0f2f5;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+/*
+  ── 布局：全屏立绘 + 浮层对话（以手机端为准）────────────────────────────
+
+  为什么不做左右分栏（实测）：立绘是 9:16 竖屏，桌面 16:9 显示器上无论怎么放都错——
+  按高缩放只覆盖 32% 宽度（两侧各空三分之一），按宽缩放则高度溢出 216%（人裁掉大半）。
+  手机 9:19.5 与素材比例接近，铺满几乎无冲突。所以**以手机端为准**，桌面端接受两侧留白。
+
+  结构：#app 单列铺满视口；#stage 绝对定位铺满当背景；#chat 浮在其上，
+  用 flex 分三段（顶栏 / 消息区 / 输入区），消息区透明可透出立绘。
+*/
+#app {
+  position: relative;
+  width: 100%;
+  /* dvh 优先：移动端地址栏收放会改变视口高度，100vh 会让布局跳一下 */
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+}
+/* 老浏览器不认 dvh 时退回 vh */
+@supports not (height: 100dvh) {
+  #app { height: 100vh; max-height: 100vh; }
+}
+
+/*
+  ── 手机框：桌面浏览器里锁成手机尺寸 ────────────────────────────────
+
+  ⚠️ 这条**必须在上面基础 #app 规则之后**——踩过的坑见下。
+
+  症状：媒体查询明明命中了（CDP 实测 `body` 拿到了 `display:grid` 与深色底、
+  `#app` 拿到了 `border-radius:28px`），但 `width` 仍是 1886px 而非 390px。
+  **同一个块里有的属性生效、有的不生效**——这个症状本身就说明不是查询没命中。
+
+  原因：最初这条写在第 47 行、基础 `#app` 在第 78 行。两者特异性**相同**（都是 `#app`），
+  按层叠规则**后出现的赢**，于是基础规则的 `width:100%/height:100dvh` 盖掉了这里的值。
+  `border-radius` 之所以生效，是因为基础规则里**没有**这个属性、没有竞争者。
+
+  教训：移动优先的写法要求「基础在前、覆盖在后」。当初把覆盖块写在了前面。
+
+  条件用 `min-width: 700px` 而非 `min-aspect-ratio: 1/1`：
+  后者是 Media Queries Level 4 特性，兼容性不如 MQ3 的 min-width。
+  700px 卡在「手机横屏最大约 926px」与「桌面最小常见 1024px」之间，
+  真机竖屏（390–430px）不命中，界面铺满全屏 = 原生手机体验。
+*/
+@media (min-width: 700px) and (min-height: 620px) {
+  body {
+    background: #0a0b0e;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+  }
+  #app {
+    width: 390px;
+    height: min(844px, 96dvh);
+    max-height: 96dvh;
+    border-radius: 28px;
+    overflow: hidden;
+    box-shadow:
+      0 0 0 8px #1c1f26,
+      0 24px 60px rgba(0, 0, 0, .6);
+  }
+}
+
+/* ── 立绘舞台：序列帧铺满整屏 ───────────────────────────────
+   渲染细节由 papercut.js 自注入（.pc-img / .pc-hud），这里只管定位与底色。
+
+   底色 = **素材自身边缘的实测颜色**，一跑 `app/analyze-batch.mjs` 就知道：
+     · 剪纸批次  rgb(21,22,28) = #15161c
+     · 插画批次  rgb(11,12,14) = #0b0c0e
+     · 像素批次  rgb(1,1,1)    ≈ 纯黑（四角全为 1,1,1；底部中间是裙子 rgb(39,47,83)，不是背景）
+   素材是 9:16 竖图、按 object-fit:contain 居中，比手机屏（约 9:19.5）矮一截，
+   上下必然留出底色带——**底色必须与素材同色，接缝才看不出来**。
+   2026-10-01 用户实测反馈：原先的 #0b0b0f（偏蓝深灰）与素材对不上，能看到缝，
+   故改为纯黑。**换批次必须重新量这个值。** */
+#stage {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background: #000;
+  border: 0;
+}
+
+/* 状态面板、情绪条、立绘占位符的样式已全部删除。
+   前两者随状态面板 DOM 一起移除（用户判定"完全没必要"）；
+   占位符则是因为 #stage 一直挂的是真立绘。
+   删掉孤儿选择器是有意的——留着会让人以为那些元素还存在。 */
+
+/* ── 对话：浮在立绘之上的三段式 ─────────────────────────── */
+#chat {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* 让立绘从上下两端透出来 */
+  padding: 0;
+}
+#chat-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  /* 顶栏半透明，立绘在它下面继续可见 */
+  background: linear-gradient(to bottom, rgba(0,0,0,.42), rgba(0,0,0,0));
+  border-bottom: 0;
+  font-size: 13px; color: rgba(255,255,255,.82);
+  flex: 0 0 auto;
+}
+/* 把「定制她」推到最右 */
+#chat-header .spacer { flex: 1; }
+#chat-header button {
+  background: rgba(255,255,255,.14);
+  border: 1px solid rgba(255,255,255,.2);
+  color: #fff;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
+.dot.on { background: #9ece6a; }
+.muted { color: var(--muted); font-size: 12px; margin-left: auto; }
+
+/*
+  ── 消息区：只占下半屏，把上半屏留给她 ────────────────────────────────
+
+  为什么改成固定高度（实测数据支撑）：
+    量过全部 15 个状态的雪碧图包围盒，**人物内容占画布高 96.3%，头顶只留白 3.7%**。
+    也就是说画布里几乎没有余量。而缩放策略是 `k = min(W/w, H/h)` + 底对齐，
+    在 390×844 下得到：图层 390×693 置于 y=151，人物头顶落在 y≈176–250。
+
+    ⇒ 她的脸在**屏幕中部**，而消息区原先 `flex:1` 铺满顶栏以下的全部空间，
+      **正好把脸压住**。这就是"脸被气泡盖住"的原因。
+
+  改法：消息区改成固定占屏高的 52%，**沉到底部**（用 `margin-top:auto`），
+  于是上半屏 48%（约 405px）完全留给她。这也符合真实聊天软件——
+  消息从底部往上堆，而不是从顶部往下铺。
+*/
+#messages {
+  flex: 0 0 auto;
+  height: 52%;
+  margin-top: auto;          /* 沉底：上方空间留给立绘 */
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 14px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+
+  /*
+    内容贴底（消息从底部往上堆，像真实聊天软件）。
+
+    ⚠️ 这里**不能用 `justify-content: flex-end`**——CDP 实测踩到的坑：
+      它会让 `scrollHeight` 等于 `clientHeight`（439px），而内容实际有 11000+px。
+      也就是**内容一溢出，上方的项目就变得不可达**，滚不上去、scrollTop 永远是 0。
+      这是 flex 容器"溢出 + flex-end 对齐"的已知行为。
+
+    正确做法：让消息**自然从上往下排**，再用 `margin-top:auto` 把第一条推到底部。
+      空间富余时 → 整体贴底（margin-top 吸收剩余空间）
+      内容溢出时 → margin-top 归零，滚动区正常撑开，最新消息在底部可见
+  */
+  justify-content: flex-start;
+  /*
+    无气泡：**不给消息区加面板底色**。
+
+    原先这里有一层自下而上的深色渐变（rgba(0,0,0,.2 → .5)），本意是
+    "让气泡在浅色立绘上也读得清"。用户要求"不要有消息气泡"之后，
+    这层底色就成了**一整块气泡**——它把立绘下半部整片压暗，看起来正是个大气泡。
+    去掉它，可读性改由 `.msg` 的 text-shadow 承担（只影响文字周围一两像素）。
+  */
+  background: none;
+  /*
+    顶部渐隐：滚出上沿的文字自然淡出，而不是被硬切一刀。
+    做在**容器**上用 mask（不是 background 渐变）——理由见下。
+  */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.5) 4%, #000 11%);
+  mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.5) 4%, #000 11%);
+  -webkit-overflow-scrolling: touch;
+  /* 滚动条不抢视觉 */
+  scrollbar-width: thin;
+}
+.msg:first-child { margin-top: auto; }
+/*
+  ── 无气泡：文字直接浮在立绘上 ────────────────────────────────────────
+
+  用户要求（2026-09-15）："我说不要有消息气泡。"
+
+  所以 `.msg` **不再是"泡"**——没有背景、没有圆角、没有内边距、没有毛玻璃。
+  文字直接压在立绘上。
+
+  可读性怎么保证：立绘是浅色的（白领子、浅肤色），白字直接上去会糊，
+  所以改用 **text-shadow 描边**——多层叠加做出一圈暗边，
+  既压住浅色背景，又不像气泡那样挡住立绘。
+
+  为什么描边而不是给整条消息加半透明底：用户明确否掉了气泡；
+  描边只影响文字周围一两像素，立绘基本完整可见。
+*/
+.msg {
+  max-width: 88%;
+  padding: 0;                 /* 无气泡：不留内边距 */
+  background: none;           /* 无气泡：无底色 */
+  border-radius: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 15.5px;
+  line-height: 1.55;
+  /* 描边：4 向偏移 + 一层扩散，保证在任何底色上都读得清 */
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, .95),
+    1px 0 2px rgba(0, 0, 0, .85),
+    -1px 0 2px rgba(0, 0, 0, .85),
+    0 -1px 2px rgba(0, 0, 0, .85),
+    0 0 10px rgba(0, 0, 0, .75),
+    0 2px 14px rgba(0, 0, 0, .6);
+}
+/* 她的话：正文色，靠描边立住 */
+.msg.companion {
+  align-self: flex-start;
+  color: #f6f7fa;
+}
+/* 用户的话：暖白色 + 轻微右对齐，与她的正文区分（不再靠蓝底气泡） */
+.msg.user {
+  align-self: flex-end;
+  color: #ffe9c9;
+  text-align: right;
+}
+.msg.error { align-self: center; color: #ffb4c0; font-size: 13px; }
+/* 「她主动找你了」这类系统提示，不属于对话内容 */
+.proactive-note {
+  align-self: center; font-size: 11.5px; color: rgba(255, 255, 255, .75);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .9);
+}
+.msg .cursor { display: inline-block; width: 7px; height: 1em; vertical-align: -2px; background: rgba(255,255,255,.9); animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* 输入区：底部半透明浮层，立绘从它下面继续可见
+   --kb：键盘高度，由 app.js 用 visualViewport 实时写入（默认 0）。
+   键盘弹出时**只把输入区抬起来**，立绘不动 —— 这就是"点开输入框 UI 不变形"的实现。 */
+#composer {
+  flex: 0 0 auto;
+  display: flex; gap: 8px; padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+  border-top: 0;
+  background: linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,.28));
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transform: translateY(calc(-1 * var(--kb, 0px)));
+  transition: transform .18s ease-out;
+}
+/* 键盘动画期间别让过渡拖后腿，跟手更重要 */
+@media (prefers-reduced-motion: reduce) {
+  #composer { transition: none; }
+}
+#input {
+  flex: 1; resize: none; min-height: 42px; max-height: 160px;
+  padding: 10px 12px; border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.10); color: #fff;
+  font: inherit;
+}
+#input::placeholder { color: rgba(255,255,255,.5); }
+#input:focus { outline: none; border-color: rgba(255,255,255,.4); }
+
+/* ── 语音输入按钮（按住说话） ───────────────────────────── */
+.mic-btn {
+  flex: 0 0 auto; width: 42px; height: 42px; align-self: flex-end;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel-2); color: var(--text);
+  font-size: 18px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  user-select: none; touch-action: none;
+}
+.mic-btn:hover:not(:disabled) { border-color: var(--accent); }
+.mic-btn:disabled { opacity: .35; cursor: default; }
+/* 正在识别：红色脉冲，明确"现在在听" */
+.mic-btn.listening {
+  border-color: var(--danger); background: rgba(247, 118, 142, .16);
+  animation: mic-pulse 1.1s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(247, 118, 142, .45); }
+  50% { box-shadow: 0 0 0 7px rgba(247, 118, 142, 0); }
+}
+.mic-hint {
+  padding: 6px 16px 10px; font-size: 12px; color: var(--muted);
+  border-top: 1px dashed var(--line);
+}
+.mic-hint[hidden] { display: none; }
+#send {
+  padding: 0 18px; border-radius: 10px; border: none; cursor: pointer;
+  background: var(--accent); color: #0f1115; font-weight: 600;
+}
+#send:disabled { opacity: .5; cursor: default; }
+
+/* 「定制她」按钮、人设表单弹窗（.modal*）、问卷控件（.q-*）、交叉校验警告（.warnings）
+   的样式已全部删除（2026-10-01，用户决定：不做手动定制）。
+   同时删掉了 app/public/questionnaire.js —— 它只服务于那套表单，留着就是死代码。
+   她的设定改由后端从真实交流里推断并实时更新（见 app/companion/）。 */
+

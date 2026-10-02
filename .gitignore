@@ -1,0 +1,38 @@
+# ── 运行时状态：绝对不入库 ─────────────────────────────────────────────
+# 这里面有 API key、她的记忆库、以及你和她真实聊过的会话原文。
+# 一旦推上公开仓库，等于永久泄漏（GitHub 上有机器人专门扫 sk- 开头的 key）。
+state/*
+!state/.gitkeep
+!state/companion.env.example
+
+# ── 构建产物 ──────────────────────────────────────────────────────────
+# dist/ 里是三个电脑版 + 安卓 APK（累计 1 GB+）；而且**打进 APK 的载荷里内嵌了 key**，
+# 那份 APK 只能私下分发，不能进公开仓库。
+dist/
+*.tgz
+*.zip
+
+# ── 依赖 ──────────────────────────────────────────────────────────────
+# app/node_modules 在本机是指向 DSH 安装目录的 junction，对别人没有意义；
+# app/npm 同理。别人 clone 后按 README 跑一次 npm install 即可。
+app/node_modules/
+app/npm/
+
+# ── 素材母本 ──────────────────────────────────────────────────────────
+# 运行只需要 app/public/papercut/（已归一化的序列帧）；这两份是未处理的原始素材。
+assets/raw/
+assets/avatar-unnormalized/
+
+# ── 签名密钥 ──────────────────────────────────────────────────────────
+# 不进仓库：谁拿到它，谁就能签出被"已安装副本"当作合法更新接受的 APK。
+# 构建时若缺少，构建脚本会自己生成一把（见 deploy/android/README-安卓APK.md）。
+deploy/android/keystore/*.p12
+deploy/android/keystore/*.jks
+deploy/android/keystore/*.keystore
+
+# ── 旧文档与临时文件 ──────────────────────────────────────────────────
+docs-legacy/
+*.log
+*.pid
+state/stdout.log
+state/stderr.log

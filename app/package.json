@@ -1,0 +1,15 @@
+{
+  "name": "companion-agent-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "拟人情感互动智能体 —— 独立应用（应用自有 profile，cordis 当内核）",
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base"
+      ],
+      "patchReload": "live"
+    }
+  }
+}

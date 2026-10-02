@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  companion-agent for Android —— 自带 PRoot/Ubuntu/Node 运行时的 APK 外壳。
+
+  设计要点（与 dsh-android 的思路一致，代码为自写实现，见 THIRD_PARTY.md）：
+
+  * 没有标题栏、没有浏览器痕迹：Activity 就是一个 WebView 帧 + 首启进度页，
+    真正的前端是 guest 里 node 跑的 companion-agent 页面（http://127.0.0.1:4180/）。
+
+  * targetSdk **故意设为 28**：Android 10 起，应用落进哪个 SELinux 域由 targetSdkVersion
+    决定，只有 legacy 域允许 execve() 应用私有数据目录里的二进制。整套运行时
+    （Ubuntu rootfs + 官方 Node + 应用依赖）必须从 filesDir 里跑，所以抬 targetSdk
+    只会换来"跑不起来"。minSdk 26（Android 8.0）是 PRoot/bionic/64 位 arm 的下限。
+
+  * android:extractNativeLibs="true"：libproot.so 会在安装时被解到
+    nativeLibraryDir —— 那是 Android 稳定允许应用 execve 的位置。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.companion.agent"
+    android:installLocation="internalOnly">
+
+    <!-- versionCode / versionName / minSdk / targetSdk 全部由
+         deploy/android/build-apk.ps1 通过 aapt2 的命令行注入，manifest 里保持沉默，
+         避免两处版本号打架。 -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 读当前网络的 DNS：guest 是 glibc，必须由宿主把 /etc/resolv.conf 写好 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 开机自启 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Android 13+ 前台服务通知要运行时授权（manifest 里的名字在旧系统上被忽略） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 立绘页有语音入口（public/voice.js），WebView 要能申请麦克风 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <application
+        android:name="dev.companion.agent.App"
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:extractNativeLibs="true"
+        android:usesCleartextTraffic="true"
+        android:hardwareAccelerated="true"
+        android:supportsRtl="false">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustNothing"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|uiMode|density|fontScale">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 常驻前台服务：持有 PRoot 进程树 + WakeLock，避免息屏后进程被冻结/回收 -->
+        <service
+            android:name=".CompanionService"
+            android:exported="false"
+            android:stopWithTask="false" />
+
+        <!-- 开机自启。MY_PACKAGE_REPLACED 让"覆盖安装后自动拉起"也成立。 -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

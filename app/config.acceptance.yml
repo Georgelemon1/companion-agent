@@ -1,0 +1,23 @@
+# 验收用的窄覆盖层：把"需要等几小时"的参数缩到秒级，让 P2 验收能在几分钟内跑完。
+#
+# 注意：patch 是**整块替换**，所以每个被覆盖的行都要给完整 config。
+# 用法（不影响正常运行配置）：
+#   node app/launcher.mjs   # 正常运行用 app/cordis.patch.yml
+#   验收脚本则通过 boot 的 patches 参数注入本文件
+#
+# 与生产默认值的唯一差别是时间尺度：空闲阈值 8h→20s、冷却 90min→30s、miss 30min→45s、
+# 静默时段关闭（否则测试若撞上夜里会被正确地拦住，但那不是我们要验的东西）。
+- id: companion-clock
+  config:
+    stateDir: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../state/', baseUrl))"
+    tickMs: 5000
+    motivationThreshold: 4
+    dailyCap: 2
+    minCooldownMinutes: 1
+    missBackoffFactor: 3
+    idleThresholdHours: 0.0056
+    missAfterMinutes: 1
+    respectQuietHours: false
+    quietHours: ['23:00', '08:00']
+    extractWithLlm: false
+    extractTimeoutMs: 20000

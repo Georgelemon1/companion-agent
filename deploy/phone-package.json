@@ -1,0 +1,24 @@
+{
+  "name": "companion-agent-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "拟人情感互动智能体 —— 手机端（Termux）自有 profile；与桌面版同一份 app/ 代码",
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base"
+      ],
+      "patchReload": "live"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-base": "0.1.7-alpha.2",
+    "@deepseek-ai/dsh-app-boot": "0.1.7-alpha.2",
+    "@deepseek-ai/dsh-agent": "0.1.7-alpha.2",
+    "@deepseek-ai/dsh-llm": "0.1.7-alpha.2",
+    "@deepseek-ai/dsh-brand": "0.1.7-alpha.2",
+    "@deepseek-ai/schemastery": "3.18.4",
+    "ws": "8.21.3"
+  }
+}

@@ -1,0 +1,284 @@
+# companion-agent 应用层 patch —— 覆盖在 @deepseek-ai/dsh-base 之上。
+#
+# 应用自有 profile：不读 $DSH_HOME/profiles/<name>/cordis.patch.yml，
+# 因此这里的配置就是本应用的权威组合。凭据与 settings 仍从 ~/.dsh 读取
+# （DSH_HOME 不变），只有会话数据落在项目目录内。
+#
+# 路径用 !!js 从 baseUrl（本文件所在目录）派生，不写死绝对路径。
+
+# ── 会话落盘：改到项目目录，让应用状态自包含 ──────────────────────────────
+# SessionPersistenceJsonlConfig.root 必填且无默认值；默认由 starter profile 指定。
+# 覆盖成应用目录同级的 state/sessions，使"重启后会话不丢"可被直接检视。
+- id: session-persistence-jsonl
+  config:
+    root: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../state/sessions/', baseUrl))"
+
+# ── 遥测：本地测试应用，硬关 ─────────────────────────────────────────────
+- id: session-telemetry-otel
+  disabled: true
+
+# ── 模块热重载：应用不用 loader 级 HMR ──────────────────────────────────
+- id: hmr
+  disabled: true
+
+# ── 本应用自己的行 ──────────────────────────────────────────────────────
+- insert:
+    # ① 情感骨骼：情绪 + 关系状态机，SQLite 持久化，挂在 agent 事件上做评价
+    - id: companion-affect
+      name: ./companion/affect.js
+      config:
+        dbPath: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../state/companion.db', baseUrl))"
+        stateDir: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../state/', baseUrl))"
+        # 先用本地词表（零延迟零成本）；想让她读懂反讽与间接表达时改 true。
+        appraiseWithLlm: false
+        appraiseTimeoutMs: 20000
+        # WAL 维护周期。必须显式 checkpoint：自动阈值 1000 页(4MB) 对这个库来说
+        # 永远够不到（全库才约 11 页），不显式做 WAL 就只增不清。
+        checkpointIntervalMs: 300000
+
+    # ② 人设层：把"她是谁"与"她现在什么状态"接进系统提示词
+    #    （必须在 agent 作用域注册段，所以由它监听 agent/created）
+    - id: companion-persona
+      name: ./companion/persona-plugin.js
+      config:
+        injectState: true
+        stateDir: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../state/', baseUrl))"
+
+    # ③ 安全护栏：入站扫危机信号（直接 + 间接双通道）并注入应对指令；
+    #    出境体检由 web 层在广播前调用。定位是**角色质量保障**，不是法律义务（方案 §8.2）。
+    - id: companion-guard
+      name: ./companion/guard-plugin.js
+      config:
+        stateDir: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../state/', baseUrl))"
+        inbound: true
+        outbound: true
+        # rewrite = 命中即整段替换成安全句；notice = 只记录不改写（调试用）
+        outboundMode: rewrite
+        # 同一会话最多推荐几次求助资源，避免变成复读机
+        maxResourceMentions: 1
+
+    # ④ 时钟 + 主动性：全应用唯一的定时器。组候选 → 动机评分 → 过预算门 → agent.followup()
+    #    同时负责把用户说的话抽成事实卡片写进记忆。
+    - id: companion-clock
+      name: ./companion/clock.js
+      config:
+        stateDir: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../state/', baseUrl))"
+        tickMs: 30000
+        motivationThreshold: 7
+        dailyCap: 3
+        minCooldownMinutes: 90
+        missBackoffFactor: 3
+        idleThresholdHours: 8
+        missAfterMinutes: 30
+        respectQuietHours: true
+        quietHours: ['23:00', '08:00']
+        # 事实抽取先用本地规则（零延迟零成本）；想要更懂"随口一提"时改 true。
+        extractWithLlm: false
+        extractTimeoutMs: 20000
+
+    # ⑤ 自建轻前端 + WebSocket 通道（P0 核心），并订阅情感状态与主动性推给前端
+    - id: companion-web
+      name: ./companion/index.js
+      config:
+        port: 4180
+        host: 127.0.0.1
+        stateDir: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../state/', baseUrl))"
+        publicDir: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('./public/', baseUrl))"
+        speakerLabel: 用户
+
+# ══════════════════════════════════════════════════════════════════════════
+# 手机移植裁剪层（Android/Termux）—— 只留"她"真正要用的东西。
+#
+# 动机：dsh-base 是完整 agent 宿主（shell 工具、沙箱、子进程、子 agent、workflow、
+# skills、MCP、遥测…），而伴侣应用只需要 LLM + agent + 会话 + 凭据/设置 + 自建
+# 前端。裁掉不用的是为了把**原生依赖**从闭包里摘出去，而不是为了省事：
+#   · dsh-sandbox-local → dsh-sandbox-windows-acl(koffi) / Landlock 原生加载
+#   · dsh-subprocess-local → koffi + Windows Job runner
+#   · dsh-fs-local 的 koffi 只在 win32 分支惰性加载，Android 不会碰（保留）
+# 每一条都实测过：关掉后 health 200 且真实回合能回话（见 手机移植-裁剪清单.md）。
+# ══════════════════════════════════════════════════════════════════════════
+
+# ── ① 终端外壳与外壳沙箱：Android 没有 PowerShell ────────────────────────
+# pwsh 工具 + pwsh-sandbox 在 Termux 里是无源之水（没有 pwsh 可执行文件）。
+# bash 在 Termux 里虽然存在，但 dsh-bash-sandbox 靠 bwrap(1)/Landlock 做内核级
+# 隔离，Android 内核不保证可用 —— 伴侣不需要"让模型执行命令"这个能力，整组关掉。
+# 注：基础层用 !!js 平台表达式控制这两组，Windows 上本来就只剩 pwsh 那半边；
+# 这里显式写死，是为了让 linux(Android) 端也关（否则 tool-bash/bash-sandbox
+# 会在手机上被原表达式打开）。
+- id: tool-pwsh
+  disabled: true
+- id: pwsh-sandbox
+  disabled: true
+- id: tool-bash
+  disabled: true
+- id: bash-sandbox
+  disabled: true
+
+# shell 服务没了，它的下游 `permission`（沙箱三档权限预设）就成了孤儿：
+# 实测关掉 pwsh-sandbox 后启动审计报 "1 entry did not activate /
+# permission (@deepseek-ai/dsh-permission-presets): pending (waiting for service: shell)"。
+# 伴侣应用没有可切换的权限模式（前端不暴露、也没有 shell 工具可管），一并关掉，
+# 让启动审计回到"全部激活"的干净状态。
+- id: permission
+  disabled: true
+
+# ── ② 沙箱内核与子进程 runner：Android 上全是原生依赖 ─────────────────────
+# `sandbox` = dsh-sandbox-local：它的 import 链直接拉
+# dsh-sandbox-windows-acl(koffi FFI) 与 node-addon-system/landlock-run，
+# 这是本次移植最硬的一块原生依赖，且它只服务 shell 工具（已全关）。
+- id: sandbox
+  disabled: true
+
+# ⚠️ sandbox-policy 关不掉（实测回滚）：它是 fs-sandbox 的依赖。试着关掉后启动
+# 审计立刻报
+#   fs-sandbox (@deepseek-ai/dsh-fs-sandbox): pending (waiting for service: sandboxPolicy)
+# 而 fs-sandbox 就是 ctx.fs 的提供者（会话落盘那条路）。它本身是纯 JS
+# （只有 zod/cordis，无原生依赖），留着不增加移植负担，所以保留。
+# 结论：沙箱这块只能砍掉"内核 runner"（sandbox），砍不掉"策略对象"（sandbox-policy）。
+
+# `subprocess` = dsh-subprocess-local：koffi + Windows Job runner，
+# 伴侣不需要 spawn 任何子进程（前端、会话、记忆全在同一进程里）。
+- id: subprocess
+  disabled: true
+
+# ── ③ 工具面：让模型"动手"的全部入口，伴侣一个都用不到 ────────────────────
+# 她的 agent 只做一件事：把用户的话变成回复。文件、联网、子 agent、workflow、
+# skills、待办、目标、后台作业这些工具，对"聊天伴侣"只是更大的 tool schema 注入
+# 和更多原生依赖的入口。实测证据（关掉 ② 之后启动审计逐条点名）：
+#   tool-fs-search: pending (waiting for service: subprocess)      ← 它靠子进程跑检索
+#   ptc-runtime:    pending (waiting for services: subprocess, sandbox) ← workflow 起子 Node
+#   workflow-ptc:   pending (waiting for service: ptcRuntime)
+#   tool-workflow:  pending (waiting for service: workflowEngine)
+# 所以这四条必须跟 ② 一起关，否则启动审计会留 pending 噪音。
+- id: tool-fs
+  disabled: true
+- id: tool-fs-search
+  disabled: true
+- id: tool-web
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-control
+  disabled: true
+- id: tool-subagent-list-agents
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- id: tool-workflow
+  disabled: true
+- id: tool-skill
+  disabled: true
+- id: tool-todo
+  disabled: true
+- id: tool-goal
+  disabled: true
+- id: tool-jobs
+  disabled: true
+- id: ptc-runtime
+  disabled: true
+- id: workflow-ptc
+  disabled: true
+
+# 插件管理 / 配置编辑器：本应用的 profile 不由 $DSH_HOME 托管（app 自有 profile，
+# boot() 只 provide dshHomePath，没有 profileContext），这两行的 `disabled` 表达式
+# 本来就已经判真 —— 这里显式写死，免得以后有人换 CLI 路径启动时把它们带起来，
+# 顺手把 dsh-config-editor / dsh-plugin-manager 这两个包从手机构建里摘掉。
+- id: plugin-manager
+  disabled: true
+- id: config-editor
+  disabled: true
+
+# llm-pi-ai（多provider孪生适配器）在本应用里**永远是休眠的**：
+# 它只有等到 `llm-pi-ai:` settings 段提供 provider 配置时才注册路由，而本应用的
+# settings 行本来就是关的（boot() 没有 profileContext）—— 没有任何路径能配置它。
+# 代价却很大：它的依赖闭包带进 @aws-sdk/client-bedrock-runtime 全家桶
+# + @anthropic-ai/sdk（实测：ROOTS 里留着它时闭包 161 个包，去掉后见报告）。
+# 注意这不影响"llm 不许关"：她的模型路由走 llm-deepseek（deepseek-official），
+# 与这一行无关；实测关掉后 health 200 + 真实回合照常。
+- id: llm-pi-ai
+  disabled: true
+
+# ── ④ 服务层：工具没了，给工具配套的那一整套服务也一起下 ─────────────────
+# 判据只有一条：她的 agent 只需要 llm + tools(空注册表) + systemPrompt +
+# sessionProjections（agent-loop 的 inject 实测只有这六项），其余服务要么是给
+# 已关工具配套的，要么是给"任务型 agent"用的。
+
+# skills 三件套（skill-badge 基础层已关）：伴侣没有"技能"概念，
+# skill-filesystem 还会去扫技能目录并注入 prompt。
+- id: skill
+  disabled: true
+- id: skill-filesystem
+  disabled: true
+
+# 子 agent 三件套：spawn/fork 是"再起一份 agent 循环"的 provider，
+# 每个子 agent 都要带自己的 tool schema —— 单角色聊天伴侣不存在这种需求。
+# 三者必须一起关：spawn/fork 的 inject 都是 ["subagents"]，只关 subagent
+# 会让它们 pending。
+- id: subagent
+  disabled: true
+- id: subagent-spawn-in-process
+  disabled: true
+- id: subagent-fork-in-process
+  disabled: true
+
+# 目标（goals）家族：goal 提供 goals 服务，goal-round-driver 自动推进轮次，
+# command-goal 把 /goal 挂进斜杠菜单（它的 inject 是 ["commands","goals"]，
+# 只关 goal 会让它 pending）。
+- id: goal
+  disabled: true
+- id: goal-round-driver
+  disabled: true
+- id: command-goal
+  disabled: true
+
+# 联网检索/抓取（tool-web 已在 ③ 关）：她的"信息"来自记忆卡片与对话本身。
+- id: web
+  disabled: true
+- id: web-search-deepseek
+  disabled: true
+- id: web-fetch-http
+  disabled: true
+
+# MCP 资源（inject ["tools"]）：伴侣不接 MCP server。
+- id: mcp-resources
+  disabled: true
+
+# 图片附件字节仓 + "图片超预算时降级重试"：前端是自建气泡，只发文本。
+- id: attachment-local
+  disabled: true
+- id: image-offload
+  disabled: true
+
+# 溢出落盘（spill）：超大工具结果写到磁盘再回读 —— 工具面已空，无物可溢。
+- id: spill-local
+  disabled: true
+- id: spill-policy
+  disabled: true
+
+# 工具结果裁剪：工具面已空，无物可裁。注意它和 token-meter 是"消费者/提供者"
+# 关系，只关它不会连累别人（实测：本批唯一的两条 pending 与它无关）。
+- id: tool-result-pruner
+  disabled: true
+
+# ⚠️ token-meter 关不掉（实测回滚）：先按候选清单关了它，启动审计立刻报
+#   compaction-basic (…dsh-compaction-basic): pending (waiting for service: tokenMeter)
+#   command-compact  (…dsh-command-compact):   pending (waiting for service: compaction)
+# 也就是说"自动压缩长对话"这个能力本身依赖 tokenMeter —— 对一个要陪聊几百轮的
+# 伴侣来说，压缩是刚需（她当前会话已经 100+ 事件），所以这一条保留。
+# （原本想省掉的是"token 计量面板"，代价太大，不划算。）
+
+# 审批与提问：伴侣前端不会弹审批框，聊天里也不该冒出"选择题控件"。
+# （审批的上游 permission 已在 ① 关掉。）
+- id: approval
+  disabled: true
+- id: user-questions
+  disabled: true
+
+# plan 模式：exit_plan_mode 那套"先交方案再执行"的提示词段与工具，
+# 对"陪聊"没有意义，只会往系统提示词里塞一段长文本。
+- id: plan-mode
+  disabled: true
+
+# 连续重复工具调用提醒：工具面已空，这个提醒器没有观测对象。
+- id: repeat-tool-reminder
+  disabled: true
