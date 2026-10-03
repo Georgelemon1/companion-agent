@@ -42,8 +42,13 @@ node app/launcher.mjs          # 或者 Windows 上： .\start-companion.ps1 -De
 
 ## 安卓 APK
 
+> **预编译包见 [Releases](https://github.com/Georgelemon1/companion-agent/releases/latest)** ——
+> 那个 APK **不含任何 API key**：装好后首次打开，点右上角 `⋯ → 填 API Key` 填自己的即可
+> （申请：<https://platform.deepseek.com/>）。
+> 手机浏览器打开 release 里的 `.apk` 链接会直接下载成 `.apk`，**不会**像微信传文件那样被改成 `.apk.1`。
+
 ```powershell
-pwsh -File deploy\android\build.ps1                    # → dist/android/companion-agent.apk
+pwsh -File deploy\android\build.ps1                    # → dist/android/companion-agent.apk（不含 key）
 pwsh -File deploy\android\build.ps1 -EmbedCredentials state\companion.env   # 把 key 内嵌进包（见下方安全须知）
 ```
 
