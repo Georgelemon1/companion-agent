@@ -49,7 +49,7 @@ node app/launcher.mjs          # 或者 Windows 上： .\start-companion.ps1 -De
 
 ```powershell
 pwsh -File deploy\android\build.ps1                    # → dist/android/companion-agent.apk（不含 key）
-pwsh -File deploy\android\build.ps1 -EmbedCredentials state\companion.env   # 把 key 内嵌进包（见下方安全须知）
+pwsh -File deploy\android\build.ps1 -EmbedCredentials state\companion.env   # 把 key 内嵌进包（⚠️ 见下一行）
 ```
 
 APK 自带一套 **PRoot + Ubuntu(glibc) + 官方 Node 24 + 应用依赖**：启动时解包，用 PRoot 起后端，WebView 打开它自己的页面。
@@ -119,4 +119,3 @@ deploy/
 
 - **仓库里不含任何 key**：`.gitignore` 排除了 `state/*`（凭据、记忆库、会话原文）与 `dist/`（构建产物）。
 - `state/companion.env` 是**明文凭据**，别提交、别外传。
-- 用 `-EmbedCredentials` 构建的 APK 内含 key，**不要公开发布**。
